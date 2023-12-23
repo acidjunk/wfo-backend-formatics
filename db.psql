@@ -1,0 +1,1162 @@
+--
+-- PostgreSQL database dump
+--
+
+-- Dumped from database version 12.3
+-- Dumped by pg_dump version 12.3
+
+SET statement_timeout = 0;
+SET lock_timeout = 0;
+SET idle_in_transaction_session_timeout = 0;
+SET client_encoding = 'UTF8';
+SET standard_conforming_strings = on;
+SELECT pg_catalog.set_config('search_path', '', false);
+SET check_function_bodies = false;
+SET xmloption = content;
+SET client_min_messages = warning;
+SET row_security = off;
+
+--
+-- Name: uuid-ossp; Type: EXTENSION; Schema: -; Owner: -
+--
+
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA public;
+
+
+--
+-- Name: EXTENSION "uuid-ossp"; Type: COMMENT; Schema: -; Owner: 
+--
+
+COMMENT ON EXTENSION "uuid-ossp" IS 'generate universally unique identifiers (UUIDs)';
+
+
+--
+-- Name: refresh_subscriptions_search_view(); Type: FUNCTION; Schema: public; Owner: nwa
+--
+
+CREATE FUNCTION public.refresh_subscriptions_search_view() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    should_refresh     bool;
+    current_epoch      int;
+    last_refresh_epoch int;
+    comment_sql        text;
+BEGIN
+    SELECT extract(epoch from now())::int INTO current_epoch;
+    SELECT coalesce(pg_catalog.obj_description('subscriptions_search'::regclass)::int, 0) INTO last_refresh_epoch;
+
+    SELECT (current_epoch - last_refresh_epoch) > 120 INTO should_refresh;
+
+    IF should_refresh THEN
+        REFRESH MATERIALIZED VIEW CONCURRENTLY subscriptions_search;
+
+        comment_sql := 'COMMENT ON MATERIALIZED VIEW subscriptions_search IS ' || quote_literal(current_epoch);
+        EXECUTE comment_sql;
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+
+ALTER FUNCTION public.refresh_subscriptions_search_view() OWNER TO nwa;
+
+SET default_tablespace = '';
+
+SET default_table_access_method = heap;
+
+--
+-- Name: alembic_version; Type: TABLE; Schema: public; Owner: nwa
+--
+
+CREATE TABLE public.alembic_version (
+    version_num character varying(32) NOT NULL
+);
+
+
+ALTER TABLE public.alembic_version OWNER TO nwa;
+
+--
+-- Name: engine_settings; Type: TABLE; Schema: public; Owner: nwa
+--
+
+CREATE TABLE public.engine_settings (
+    global_lock boolean NOT NULL,
+    running_processes integer NOT NULL,
+    CONSTRAINT check_running_processes_positive CHECK ((running_processes >= 0))
+);
+
+
+ALTER TABLE public.engine_settings OWNER TO nwa;
+
+--
+-- Name: fixed_inputs; Type: TABLE; Schema: public; Owner: nwa
+--
+
+CREATE TABLE public.fixed_inputs (
+    fixed_input_id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    name character varying NOT NULL,
+    value character varying NOT NULL,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    product_id uuid NOT NULL
+);
+
+
+ALTER TABLE public.fixed_inputs OWNER TO nwa;
+
+--
+-- Name: process_steps; Type: TABLE; Schema: public; Owner: nwa
+--
+
+CREATE TABLE public.process_steps (
+    stepid uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    pid uuid NOT NULL,
+    name character varying NOT NULL,
+    status character varying(50) NOT NULL,
+    state jsonb NOT NULL,
+    created_by character varying(255),
+    executed_at timestamp with time zone DEFAULT statement_timestamp() NOT NULL,
+    commit_hash character varying(40)
+);
+
+
+ALTER TABLE public.process_steps OWNER TO nwa;
+
+--
+-- Name: processes; Type: TABLE; Schema: public; Owner: nwa
+--
+
+CREATE TABLE public.processes (
+    pid uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    workflow character varying(255) NOT NULL,
+    assignee character varying(50) DEFAULT 'SYSTEM'::character varying NOT NULL,
+    last_status character varying(50) NOT NULL,
+    last_step character varying(255),
+    started_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    last_modified_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    failed_reason text,
+    traceback text,
+    created_by character varying(255),
+    is_task boolean DEFAULT false NOT NULL
+);
+
+
+ALTER TABLE public.processes OWNER TO nwa;
+
+--
+-- Name: processes_subscriptions; Type: TABLE; Schema: public; Owner: nwa
+--
+
+CREATE TABLE public.processes_subscriptions (
+    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    pid uuid NOT NULL,
+    subscription_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    workflow_target character varying(255) DEFAULT 'CREATE'::character varying NOT NULL
+);
+
+
+ALTER TABLE public.processes_subscriptions OWNER TO nwa;
+
+--
+-- Name: product_block_relations; Type: TABLE; Schema: public; Owner: nwa
+--
+
+CREATE TABLE public.product_block_relations (
+    in_use_by_id uuid NOT NULL,
+    depends_on_id uuid NOT NULL,
+    min integer,
+    max integer
+);
+
+
+ALTER TABLE public.product_block_relations OWNER TO nwa;
+
+--
+-- Name: product_block_resource_types; Type: TABLE; Schema: public; Owner: nwa
+--
+
+CREATE TABLE public.product_block_resource_types (
+    product_block_id uuid NOT NULL,
+    resource_type_id uuid NOT NULL
+);
+
+
+ALTER TABLE public.product_block_resource_types OWNER TO nwa;
+
+--
+-- Name: product_blocks; Type: TABLE; Schema: public; Owner: nwa
+--
+
+CREATE TABLE public.product_blocks (
+    product_block_id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    name character varying NOT NULL,
+    description text NOT NULL,
+    tag character varying(20),
+    status character varying(255),
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    end_date timestamp with time zone
+);
+
+
+ALTER TABLE public.product_blocks OWNER TO nwa;
+
+--
+-- Name: product_product_blocks; Type: TABLE; Schema: public; Owner: nwa
+--
+
+CREATE TABLE public.product_product_blocks (
+    product_id uuid NOT NULL,
+    product_block_id uuid NOT NULL
+);
+
+
+ALTER TABLE public.product_product_blocks OWNER TO nwa;
+
+--
+-- Name: products; Type: TABLE; Schema: public; Owner: nwa
+--
+
+CREATE TABLE public.products (
+    product_id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    name character varying NOT NULL,
+    description text NOT NULL,
+    product_type character varying(255) NOT NULL,
+    tag character varying(20) NOT NULL,
+    status character varying(255) NOT NULL,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    end_date timestamp with time zone
+);
+
+
+ALTER TABLE public.products OWNER TO nwa;
+
+--
+-- Name: products_workflows; Type: TABLE; Schema: public; Owner: nwa
+--
+
+CREATE TABLE public.products_workflows (
+    product_id uuid NOT NULL,
+    workflow_id uuid NOT NULL
+);
+
+
+ALTER TABLE public.products_workflows OWNER TO nwa;
+
+--
+-- Name: resource_types; Type: TABLE; Schema: public; Owner: nwa
+--
+
+CREATE TABLE public.resource_types (
+    resource_type_id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    resource_type character varying(510) NOT NULL,
+    description text
+);
+
+
+ALTER TABLE public.resource_types OWNER TO nwa;
+
+--
+-- Name: subscription_customer_descriptions; Type: TABLE; Schema: public; Owner: nwa
+--
+
+CREATE TABLE public.subscription_customer_descriptions (
+    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    subscription_id uuid NOT NULL,
+    customer_id character varying NOT NULL,
+    description text NOT NULL,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+
+ALTER TABLE public.subscription_customer_descriptions OWNER TO nwa;
+
+--
+-- Name: subscription_instance_relations; Type: TABLE; Schema: public; Owner: nwa
+--
+
+CREATE TABLE public.subscription_instance_relations (
+    in_use_by_id uuid NOT NULL,
+    depends_on_id uuid NOT NULL,
+    order_id integer NOT NULL,
+    domain_model_attr text
+);
+
+
+ALTER TABLE public.subscription_instance_relations OWNER TO nwa;
+
+--
+-- Name: subscription_instance_values; Type: TABLE; Schema: public; Owner: nwa
+--
+
+CREATE TABLE public.subscription_instance_values (
+    subscription_instance_value_id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    subscription_instance_id uuid NOT NULL,
+    resource_type_id uuid NOT NULL,
+    value text NOT NULL
+);
+
+
+ALTER TABLE public.subscription_instance_values OWNER TO nwa;
+
+--
+-- Name: subscription_instances; Type: TABLE; Schema: public; Owner: nwa
+--
+
+CREATE TABLE public.subscription_instances (
+    subscription_instance_id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    subscription_id uuid NOT NULL,
+    product_block_id uuid NOT NULL,
+    label character varying(255)
+);
+
+
+ALTER TABLE public.subscription_instances OWNER TO nwa;
+
+--
+-- Name: subscription_metadata; Type: TABLE; Schema: public; Owner: nwa
+--
+
+CREATE TABLE public.subscription_metadata (
+    subscription_id uuid NOT NULL,
+    metadata jsonb NOT NULL
+);
+
+
+ALTER TABLE public.subscription_metadata OWNER TO nwa;
+
+--
+-- Name: subscriptions; Type: TABLE; Schema: public; Owner: nwa
+--
+
+CREATE TABLE public.subscriptions (
+    subscription_id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    description text NOT NULL,
+    status character varying(255) NOT NULL,
+    product_id uuid NOT NULL,
+    customer_id character varying NOT NULL,
+    insync boolean NOT NULL,
+    start_date timestamp with time zone,
+    end_date timestamp with time zone,
+    note text
+);
+
+
+ALTER TABLE public.subscriptions OWNER TO nwa;
+
+--
+-- Name: subscriptions_search; Type: MATERIALIZED VIEW; Schema: public; Owner: nwa
+--
+
+CREATE MATERIALIZED VIEW public.subscriptions_search AS
+ WITH rt_info AS (
+         SELECT s_1.subscription_id,
+            concat_ws(', '::text, string_agg((((rt.resource_type)::text || ':'::text) || siv.value), ', '::text ORDER BY rt.resource_type), string_agg(DISTINCT (('subscription_instance_id'::text || ':'::text) || si.subscription_instance_id), ', '::text)) AS rt_info
+           FROM (((public.subscription_instance_values siv
+             JOIN public.resource_types rt ON ((siv.resource_type_id = rt.resource_type_id)))
+             JOIN public.subscription_instances si ON ((siv.subscription_instance_id = si.subscription_instance_id)))
+             JOIN public.subscriptions s_1 ON ((si.subscription_id = s_1.subscription_id)))
+          GROUP BY s_1.subscription_id
+        ), sub_prod_info AS (
+         SELECT s_1.subscription_id,
+            array_to_string(ARRAY[('subscription_id:'::text || s_1.subscription_id), ('status:'::text || (s_1.status)::text), ('insync:'::text || s_1.insync), ('subscription_description:'::text || s_1.description), ('note:'::text || COALESCE(s_1.note, ''::text)), ('customer_id:'::text || (s_1.customer_id)::text), ('product_id:'::text || s_1.product_id)], ', '::text) AS sub_info,
+            array_to_string(ARRAY[('product_name:'::text || (p.name)::text), ('product_description:'::text || p.description), ('tag:'::text || (p.tag)::text), 'product_type:'::text, (p.product_type)::text], ', '::text) AS prod_info
+           FROM (public.subscriptions s_1
+             JOIN public.products p ON ((s_1.product_id = p.product_id)))
+        ), fi_info AS (
+         SELECT s_1.subscription_id,
+            string_agg((((fi_1.name)::text || ':'::text) || (fi_1.value)::text), ', '::text ORDER BY fi_1.name) AS fi_info
+           FROM ((public.subscriptions s_1
+             JOIN public.products p ON ((s_1.product_id = p.product_id)))
+             JOIN public.fixed_inputs fi_1 ON ((p.product_id = fi_1.product_id)))
+          GROUP BY s_1.subscription_id
+        ), cust_info AS (
+         SELECT s_1.subscription_id,
+            string_agg(('customer_description: '::text || scd.description), ', '::text) AS cust_info
+           FROM (public.subscriptions s_1
+             JOIN public.subscription_customer_descriptions scd ON ((s_1.subscription_id = scd.subscription_id)))
+          GROUP BY s_1.subscription_id
+        )
+ SELECT s.subscription_id,
+    to_tsvector('simple'::regconfig, concat_ws(', '::text, spi.sub_info, spi.prod_info, fi.fi_info, rti.rt_info, ci.cust_info, (md.metadata)::text)) AS tsv
+   FROM (((((public.subscriptions s
+     LEFT JOIN sub_prod_info spi ON ((s.subscription_id = spi.subscription_id)))
+     LEFT JOIN fi_info fi ON ((s.subscription_id = fi.subscription_id)))
+     LEFT JOIN rt_info rti ON ((s.subscription_id = rti.subscription_id)))
+     LEFT JOIN cust_info ci ON ((s.subscription_id = ci.subscription_id)))
+     LEFT JOIN public.subscription_metadata md ON ((s.subscription_id = md.subscription_id)))
+  WITH NO DATA;
+
+
+ALTER TABLE public.subscriptions_search OWNER TO nwa;
+
+--
+-- Name: workflows; Type: TABLE; Schema: public; Owner: nwa
+--
+
+CREATE TABLE public.workflows (
+    workflow_id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    name character varying NOT NULL,
+    target character varying NOT NULL,
+    description text,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+
+ALTER TABLE public.workflows OWNER TO nwa;
+
+--
+-- Data for Name: alembic_version; Type: TABLE DATA; Schema: public; Owner: nwa
+--
+
+COPY public.alembic_version (version_num) FROM stdin;
+a77227fe5455
+\.
+
+
+--
+-- Data for Name: engine_settings; Type: TABLE DATA; Schema: public; Owner: nwa
+--
+
+COPY public.engine_settings (global_lock, running_processes) FROM stdin;
+f	0
+\.
+
+
+--
+-- Data for Name: fixed_inputs; Type: TABLE DATA; Schema: public; Owner: nwa
+--
+
+COPY public.fixed_inputs (fixed_input_id, name, value, created_at, product_id) FROM stdin;
+\.
+
+
+--
+-- Data for Name: process_steps; Type: TABLE DATA; Schema: public; Owner: nwa
+--
+
+COPY public.process_steps (stepid, pid, name, status, state, created_by, executed_at, commit_hash) FROM stdin;
+\.
+
+
+--
+-- Data for Name: processes; Type: TABLE DATA; Schema: public; Owner: nwa
+--
+
+COPY public.processes (pid, workflow, assignee, last_status, last_step, started_at, last_modified_at, failed_reason, traceback, created_by, is_task) FROM stdin;
+\.
+
+
+--
+-- Data for Name: processes_subscriptions; Type: TABLE DATA; Schema: public; Owner: nwa
+--
+
+COPY public.processes_subscriptions (id, pid, subscription_id, created_at, workflow_target) FROM stdin;
+\.
+
+
+--
+-- Data for Name: product_block_relations; Type: TABLE DATA; Schema: public; Owner: nwa
+--
+
+COPY public.product_block_relations (in_use_by_id, depends_on_id, min, max) FROM stdin;
+\.
+
+
+--
+-- Data for Name: product_block_resource_types; Type: TABLE DATA; Schema: public; Owner: nwa
+--
+
+COPY public.product_block_resource_types (product_block_id, resource_type_id) FROM stdin;
+\.
+
+
+--
+-- Data for Name: product_blocks; Type: TABLE DATA; Schema: public; Owner: nwa
+--
+
+COPY public.product_blocks (product_block_id, name, description, tag, status, created_at, end_date) FROM stdin;
+\.
+
+
+--
+-- Data for Name: product_product_blocks; Type: TABLE DATA; Schema: public; Owner: nwa
+--
+
+COPY public.product_product_blocks (product_id, product_block_id) FROM stdin;
+\.
+
+
+--
+-- Data for Name: products; Type: TABLE DATA; Schema: public; Owner: nwa
+--
+
+COPY public.products (product_id, name, description, product_type, tag, status, created_at, end_date) FROM stdin;
+\.
+
+
+--
+-- Data for Name: products_workflows; Type: TABLE DATA; Schema: public; Owner: nwa
+--
+
+COPY public.products_workflows (product_id, workflow_id) FROM stdin;
+\.
+
+
+--
+-- Data for Name: resource_types; Type: TABLE DATA; Schema: public; Owner: nwa
+--
+
+COPY public.resource_types (resource_type_id, resource_type, description) FROM stdin;
+\.
+
+
+--
+-- Data for Name: subscription_customer_descriptions; Type: TABLE DATA; Schema: public; Owner: nwa
+--
+
+COPY public.subscription_customer_descriptions (id, subscription_id, customer_id, description, created_at) FROM stdin;
+\.
+
+
+--
+-- Data for Name: subscription_instance_relations; Type: TABLE DATA; Schema: public; Owner: nwa
+--
+
+COPY public.subscription_instance_relations (in_use_by_id, depends_on_id, order_id, domain_model_attr) FROM stdin;
+\.
+
+
+--
+-- Data for Name: subscription_instance_values; Type: TABLE DATA; Schema: public; Owner: nwa
+--
+
+COPY public.subscription_instance_values (subscription_instance_value_id, subscription_instance_id, resource_type_id, value) FROM stdin;
+\.
+
+
+--
+-- Data for Name: subscription_instances; Type: TABLE DATA; Schema: public; Owner: nwa
+--
+
+COPY public.subscription_instances (subscription_instance_id, subscription_id, product_block_id, label) FROM stdin;
+\.
+
+
+--
+-- Data for Name: subscription_metadata; Type: TABLE DATA; Schema: public; Owner: nwa
+--
+
+COPY public.subscription_metadata (subscription_id, metadata) FROM stdin;
+\.
+
+
+--
+-- Data for Name: subscriptions; Type: TABLE DATA; Schema: public; Owner: nwa
+--
+
+COPY public.subscriptions (subscription_id, description, status, product_id, customer_id, insync, start_date, end_date, note) FROM stdin;
+\.
+
+
+--
+-- Data for Name: workflows; Type: TABLE DATA; Schema: public; Owner: nwa
+--
+
+COPY public.workflows (workflow_id, name, target, description, created_at) FROM stdin;
+df8faa6c-652a-4681-8ad9-2d9f027386ca	modify_note	MODIFY	Modify Note	2023-12-15 23:28:24.371126+01
+ce2056be-c28f-479f-b9d8-778ef09892b3	task_clean_up_tasks	SYSTEM	Clean up old tasks	2023-12-15 23:28:24.371126+01
+7a0b96b4-237e-44b3-a9f0-24e89d4fa1f4	task_resume_workflows	SYSTEM	Resume all workflows that are stuck on tasks with the status 'waiting'	2023-12-15 23:28:24.371126+01
+e0bbbefb-d06e-4851-91b4-87ab343e42e6	task_validate_products	SYSTEM	Validate products	2023-12-15 23:28:24.371126+01
+\.
+
+
+--
+-- Name: alembic_version alembic_version_pkc; Type: CONSTRAINT; Schema: public; Owner: nwa
+--
+
+ALTER TABLE ONLY public.alembic_version
+    ADD CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num);
+
+
+--
+-- Name: engine_settings engine_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: nwa
+--
+
+ALTER TABLE ONLY public.engine_settings
+    ADD CONSTRAINT engine_settings_pkey PRIMARY KEY (global_lock);
+
+
+--
+-- Name: fixed_inputs fixed_inputs_name_product_id_key; Type: CONSTRAINT; Schema: public; Owner: nwa
+--
+
+ALTER TABLE ONLY public.fixed_inputs
+    ADD CONSTRAINT fixed_inputs_name_product_id_key UNIQUE (name, product_id);
+
+
+--
+-- Name: fixed_inputs fixed_inputs_pkey; Type: CONSTRAINT; Schema: public; Owner: nwa
+--
+
+ALTER TABLE ONLY public.fixed_inputs
+    ADD CONSTRAINT fixed_inputs_pkey PRIMARY KEY (fixed_input_id);
+
+
+--
+-- Name: process_steps process_steps_pkey; Type: CONSTRAINT; Schema: public; Owner: nwa
+--
+
+ALTER TABLE ONLY public.process_steps
+    ADD CONSTRAINT process_steps_pkey PRIMARY KEY (stepid);
+
+
+--
+-- Name: processes processes_pkey; Type: CONSTRAINT; Schema: public; Owner: nwa
+--
+
+ALTER TABLE ONLY public.processes
+    ADD CONSTRAINT processes_pkey PRIMARY KEY (pid);
+
+
+--
+-- Name: processes_subscriptions processes_subscriptions_pkey; Type: CONSTRAINT; Schema: public; Owner: nwa
+--
+
+ALTER TABLE ONLY public.processes_subscriptions
+    ADD CONSTRAINT processes_subscriptions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: product_block_relations product_block_relations_pkey; Type: CONSTRAINT; Schema: public; Owner: nwa
+--
+
+ALTER TABLE ONLY public.product_block_relations
+    ADD CONSTRAINT product_block_relations_pkey PRIMARY KEY (in_use_by_id, depends_on_id);
+
+
+--
+-- Name: product_block_resource_types product_block_resource_types_pkey; Type: CONSTRAINT; Schema: public; Owner: nwa
+--
+
+ALTER TABLE ONLY public.product_block_resource_types
+    ADD CONSTRAINT product_block_resource_types_pkey PRIMARY KEY (product_block_id, resource_type_id);
+
+
+--
+-- Name: product_blocks product_blocks_name_key; Type: CONSTRAINT; Schema: public; Owner: nwa
+--
+
+ALTER TABLE ONLY public.product_blocks
+    ADD CONSTRAINT product_blocks_name_key UNIQUE (name);
+
+
+--
+-- Name: product_blocks product_blocks_pkey; Type: CONSTRAINT; Schema: public; Owner: nwa
+--
+
+ALTER TABLE ONLY public.product_blocks
+    ADD CONSTRAINT product_blocks_pkey PRIMARY KEY (product_block_id);
+
+
+--
+-- Name: product_product_blocks product_product_blocks_pkey; Type: CONSTRAINT; Schema: public; Owner: nwa
+--
+
+ALTER TABLE ONLY public.product_product_blocks
+    ADD CONSTRAINT product_product_blocks_pkey PRIMARY KEY (product_id, product_block_id);
+
+
+--
+-- Name: products products_name_key; Type: CONSTRAINT; Schema: public; Owner: nwa
+--
+
+ALTER TABLE ONLY public.products
+    ADD CONSTRAINT products_name_key UNIQUE (name);
+
+
+--
+-- Name: products products_pkey; Type: CONSTRAINT; Schema: public; Owner: nwa
+--
+
+ALTER TABLE ONLY public.products
+    ADD CONSTRAINT products_pkey PRIMARY KEY (product_id);
+
+
+--
+-- Name: products_workflows products_workflows_pkey; Type: CONSTRAINT; Schema: public; Owner: nwa
+--
+
+ALTER TABLE ONLY public.products_workflows
+    ADD CONSTRAINT products_workflows_pkey PRIMARY KEY (product_id, workflow_id);
+
+
+--
+-- Name: resource_types resource_types_pkey; Type: CONSTRAINT; Schema: public; Owner: nwa
+--
+
+ALTER TABLE ONLY public.resource_types
+    ADD CONSTRAINT resource_types_pkey PRIMARY KEY (resource_type_id);
+
+
+--
+-- Name: resource_types resource_types_resource_type_key; Type: CONSTRAINT; Schema: public; Owner: nwa
+--
+
+ALTER TABLE ONLY public.resource_types
+    ADD CONSTRAINT resource_types_resource_type_key UNIQUE (resource_type);
+
+
+--
+-- Name: subscription_customer_descriptions subscription_customer_descriptions_pkey; Type: CONSTRAINT; Schema: public; Owner: nwa
+--
+
+ALTER TABLE ONLY public.subscription_customer_descriptions
+    ADD CONSTRAINT subscription_customer_descriptions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: subscription_instance_relations subscription_instance_relations_pkey; Type: CONSTRAINT; Schema: public; Owner: nwa
+--
+
+ALTER TABLE ONLY public.subscription_instance_relations
+    ADD CONSTRAINT subscription_instance_relations_pkey PRIMARY KEY (in_use_by_id, depends_on_id, order_id);
+
+
+--
+-- Name: subscription_instance_values subscription_instance_values_pkey; Type: CONSTRAINT; Schema: public; Owner: nwa
+--
+
+ALTER TABLE ONLY public.subscription_instance_values
+    ADD CONSTRAINT subscription_instance_values_pkey PRIMARY KEY (subscription_instance_value_id);
+
+
+--
+-- Name: subscription_instances subscription_instances_pkey; Type: CONSTRAINT; Schema: public; Owner: nwa
+--
+
+ALTER TABLE ONLY public.subscription_instances
+    ADD CONSTRAINT subscription_instances_pkey PRIMARY KEY (subscription_instance_id);
+
+
+--
+-- Name: subscriptions subscriptions_pkey; Type: CONSTRAINT; Schema: public; Owner: nwa
+--
+
+ALTER TABLE ONLY public.subscriptions
+    ADD CONSTRAINT subscriptions_pkey PRIMARY KEY (subscription_id);
+
+
+--
+-- Name: subscription_customer_descriptions uniq_customer_subscription_description; Type: CONSTRAINT; Schema: public; Owner: nwa
+--
+
+ALTER TABLE ONLY public.subscription_customer_descriptions
+    ADD CONSTRAINT uniq_customer_subscription_description UNIQUE (customer_id, subscription_id);
+
+
+--
+-- Name: workflows workflows_name_key; Type: CONSTRAINT; Schema: public; Owner: nwa
+--
+
+ALTER TABLE ONLY public.workflows
+    ADD CONSTRAINT workflows_name_key UNIQUE (name);
+
+
+--
+-- Name: workflows workflows_pkey; Type: CONSTRAINT; Schema: public; Owner: nwa
+--
+
+ALTER TABLE ONLY public.workflows
+    ADD CONSTRAINT workflows_pkey PRIMARY KEY (workflow_id);
+
+
+--
+-- Name: ix_process_steps_pid; Type: INDEX; Schema: public; Owner: nwa
+--
+
+CREATE INDEX ix_process_steps_pid ON public.process_steps USING btree (pid);
+
+
+--
+-- Name: ix_processes_is_task; Type: INDEX; Schema: public; Owner: nwa
+--
+
+CREATE INDEX ix_processes_is_task ON public.processes USING btree (is_task);
+
+
+--
+-- Name: ix_processes_pid; Type: INDEX; Schema: public; Owner: nwa
+--
+
+CREATE INDEX ix_processes_pid ON public.processes USING btree (pid);
+
+
+--
+-- Name: ix_processes_subscriptions_pid; Type: INDEX; Schema: public; Owner: nwa
+--
+
+CREATE INDEX ix_processes_subscriptions_pid ON public.processes_subscriptions USING btree (pid);
+
+
+--
+-- Name: ix_processes_subscriptions_subscription_id; Type: INDEX; Schema: public; Owner: nwa
+--
+
+CREATE INDEX ix_processes_subscriptions_subscription_id ON public.processes_subscriptions USING btree (subscription_id);
+
+
+--
+-- Name: ix_products_tag; Type: INDEX; Schema: public; Owner: nwa
+--
+
+CREATE INDEX ix_products_tag ON public.products USING btree (tag);
+
+
+--
+-- Name: ix_subscription_customer_descriptions_customer_id; Type: INDEX; Schema: public; Owner: nwa
+--
+
+CREATE INDEX ix_subscription_customer_descriptions_customer_id ON public.subscription_customer_descriptions USING btree (customer_id);
+
+
+--
+-- Name: ix_subscription_customer_descriptions_subscription_id; Type: INDEX; Schema: public; Owner: nwa
+--
+
+CREATE INDEX ix_subscription_customer_descriptions_subscription_id ON public.subscription_customer_descriptions USING btree (subscription_id);
+
+
+--
+-- Name: ix_subscription_instance_values_resource_type_id; Type: INDEX; Schema: public; Owner: nwa
+--
+
+CREATE INDEX ix_subscription_instance_values_resource_type_id ON public.subscription_instance_values USING btree (resource_type_id);
+
+
+--
+-- Name: ix_subscription_instance_values_subscription_instance_id; Type: INDEX; Schema: public; Owner: nwa
+--
+
+CREATE INDEX ix_subscription_instance_values_subscription_instance_id ON public.subscription_instance_values USING btree (subscription_instance_id);
+
+
+--
+-- Name: ix_subscription_instances_product_block_id; Type: INDEX; Schema: public; Owner: nwa
+--
+
+CREATE INDEX ix_subscription_instances_product_block_id ON public.subscription_instances USING btree (product_block_id);
+
+
+--
+-- Name: ix_subscription_instances_subscription_id; Type: INDEX; Schema: public; Owner: nwa
+--
+
+CREATE INDEX ix_subscription_instances_subscription_id ON public.subscription_instances USING btree (subscription_id);
+
+
+--
+-- Name: ix_subscription_metadata_subscription_id; Type: INDEX; Schema: public; Owner: nwa
+--
+
+CREATE INDEX ix_subscription_metadata_subscription_id ON public.subscription_metadata USING btree (subscription_id);
+
+
+--
+-- Name: ix_subscriptions_customer_id; Type: INDEX; Schema: public; Owner: nwa
+--
+
+CREATE INDEX ix_subscriptions_customer_id ON public.subscriptions USING btree (customer_id);
+
+
+--
+-- Name: ix_subscriptions_product_id; Type: INDEX; Schema: public; Owner: nwa
+--
+
+CREATE INDEX ix_subscriptions_product_id ON public.subscriptions USING btree (product_id);
+
+
+--
+-- Name: ix_subscriptions_status; Type: INDEX; Schema: public; Owner: nwa
+--
+
+CREATE INDEX ix_subscriptions_status ON public.subscriptions USING btree (status);
+
+
+--
+-- Name: processes_subscriptions_ix; Type: INDEX; Schema: public; Owner: nwa
+--
+
+CREATE INDEX processes_subscriptions_ix ON public.processes_subscriptions USING btree (pid, subscription_id);
+
+
+--
+-- Name: product_block_relation_i_d_ix; Type: INDEX; Schema: public; Owner: nwa
+--
+
+CREATE UNIQUE INDEX product_block_relation_i_d_ix ON public.product_block_relations USING btree (in_use_by_id, depends_on_id);
+
+
+--
+-- Name: siv_si_rt_ix; Type: INDEX; Schema: public; Owner: nwa
+--
+
+CREATE INDEX siv_si_rt_ix ON public.subscription_instance_values USING btree (subscription_instance_value_id, subscription_instance_id, resource_type_id);
+
+
+--
+-- Name: subscription_customer_ix; Type: INDEX; Schema: public; Owner: nwa
+--
+
+CREATE INDEX subscription_customer_ix ON public.subscriptions USING btree (subscription_id, customer_id);
+
+
+--
+-- Name: subscription_instance_s_pb_ix; Type: INDEX; Schema: public; Owner: nwa
+--
+
+CREATE INDEX subscription_instance_s_pb_ix ON public.subscription_instances USING btree (subscription_instance_id, subscription_id, product_block_id);
+
+
+--
+-- Name: subscription_product_ix; Type: INDEX; Schema: public; Owner: nwa
+--
+
+CREATE INDEX subscription_product_ix ON public.subscriptions USING btree (subscription_id, product_id);
+
+
+--
+-- Name: subscription_relation_i_d_o_ix; Type: INDEX; Schema: public; Owner: nwa
+--
+
+CREATE UNIQUE INDEX subscription_relation_i_d_o_ix ON public.subscription_instance_relations USING btree (in_use_by_id, depends_on_id, order_id);
+
+
+--
+-- Name: subscriptions_search_subscription_id_idx; Type: INDEX; Schema: public; Owner: nwa
+--
+
+CREATE UNIQUE INDEX subscriptions_search_subscription_id_idx ON public.subscriptions_search USING btree (subscription_id);
+
+
+--
+-- Name: subscriptions_search_tsv_idx; Type: INDEX; Schema: public; Owner: nwa
+--
+
+CREATE INDEX subscriptions_search_tsv_idx ON public.subscriptions_search USING gin (tsv);
+
+
+--
+-- Name: fixed_inputs fi_refresh_search; Type: TRIGGER; Schema: public; Owner: nwa
+--
+
+CREATE CONSTRAINT TRIGGER fi_refresh_search AFTER UPDATE ON public.fixed_inputs DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.refresh_subscriptions_search_view();
+
+
+--
+-- Name: products products_refresh_search; Type: TRIGGER; Schema: public; Owner: nwa
+--
+
+CREATE CONSTRAINT TRIGGER products_refresh_search AFTER UPDATE ON public.products DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.refresh_subscriptions_search_view();
+
+
+--
+-- Name: subscription_instance_values siv_refresh_search; Type: TRIGGER; Schema: public; Owner: nwa
+--
+
+CREATE CONSTRAINT TRIGGER siv_refresh_search AFTER INSERT OR DELETE OR UPDATE ON public.subscription_instance_values DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.refresh_subscriptions_search_view();
+
+
+--
+-- Name: subscription_customer_descriptions sub_cust_desc_refresh_search; Type: TRIGGER; Schema: public; Owner: nwa
+--
+
+CREATE CONSTRAINT TRIGGER sub_cust_desc_refresh_search AFTER INSERT OR DELETE OR UPDATE ON public.subscription_customer_descriptions DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.refresh_subscriptions_search_view();
+
+
+--
+-- Name: subscriptions sub_refresh_search; Type: TRIGGER; Schema: public; Owner: nwa
+--
+
+CREATE CONSTRAINT TRIGGER sub_refresh_search AFTER INSERT OR DELETE OR UPDATE ON public.subscriptions DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.refresh_subscriptions_search_view();
+
+
+--
+-- Name: fixed_inputs fixed_inputs_product_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: nwa
+--
+
+ALTER TABLE ONLY public.fixed_inputs
+    ADD CONSTRAINT fixed_inputs_product_id_fkey FOREIGN KEY (product_id) REFERENCES public.products(product_id) ON DELETE CASCADE;
+
+
+--
+-- Name: process_steps process_steps_pid_fkey; Type: FK CONSTRAINT; Schema: public; Owner: nwa
+--
+
+ALTER TABLE ONLY public.process_steps
+    ADD CONSTRAINT process_steps_pid_fkey FOREIGN KEY (pid) REFERENCES public.processes(pid) ON DELETE CASCADE;
+
+
+--
+-- Name: processes_subscriptions processes_subscriptions_pid_fkey; Type: FK CONSTRAINT; Schema: public; Owner: nwa
+--
+
+ALTER TABLE ONLY public.processes_subscriptions
+    ADD CONSTRAINT processes_subscriptions_pid_fkey FOREIGN KEY (pid) REFERENCES public.processes(pid) ON DELETE CASCADE;
+
+
+--
+-- Name: processes_subscriptions processes_subscriptions_subscription_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: nwa
+--
+
+ALTER TABLE ONLY public.processes_subscriptions
+    ADD CONSTRAINT processes_subscriptions_subscription_id_fkey FOREIGN KEY (subscription_id) REFERENCES public.subscriptions(subscription_id);
+
+
+--
+-- Name: product_block_relations product_block_relations_depends_on_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: nwa
+--
+
+ALTER TABLE ONLY public.product_block_relations
+    ADD CONSTRAINT product_block_relations_depends_on_id_fkey FOREIGN KEY (depends_on_id) REFERENCES public.product_blocks(product_block_id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_block_relations product_block_relations_in_use_by_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: nwa
+--
+
+ALTER TABLE ONLY public.product_block_relations
+    ADD CONSTRAINT product_block_relations_in_use_by_id_fkey FOREIGN KEY (in_use_by_id) REFERENCES public.product_blocks(product_block_id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_block_resource_types product_block_resource_types_product_block_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: nwa
+--
+
+ALTER TABLE ONLY public.product_block_resource_types
+    ADD CONSTRAINT product_block_resource_types_product_block_id_fkey FOREIGN KEY (product_block_id) REFERENCES public.product_blocks(product_block_id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_block_resource_types product_block_resource_types_resource_type_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: nwa
+--
+
+ALTER TABLE ONLY public.product_block_resource_types
+    ADD CONSTRAINT product_block_resource_types_resource_type_id_fkey FOREIGN KEY (resource_type_id) REFERENCES public.resource_types(resource_type_id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_product_blocks product_product_blocks_product_block_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: nwa
+--
+
+ALTER TABLE ONLY public.product_product_blocks
+    ADD CONSTRAINT product_product_blocks_product_block_id_fkey FOREIGN KEY (product_block_id) REFERENCES public.product_blocks(product_block_id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_product_blocks product_product_blocks_product_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: nwa
+--
+
+ALTER TABLE ONLY public.product_product_blocks
+    ADD CONSTRAINT product_product_blocks_product_id_fkey FOREIGN KEY (product_id) REFERENCES public.products(product_id) ON DELETE CASCADE;
+
+
+--
+-- Name: products_workflows products_workflows_product_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: nwa
+--
+
+ALTER TABLE ONLY public.products_workflows
+    ADD CONSTRAINT products_workflows_product_id_fkey FOREIGN KEY (product_id) REFERENCES public.products(product_id) ON DELETE CASCADE;
+
+
+--
+-- Name: products_workflows products_workflows_workflow_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: nwa
+--
+
+ALTER TABLE ONLY public.products_workflows
+    ADD CONSTRAINT products_workflows_workflow_id_fkey FOREIGN KEY (workflow_id) REFERENCES public.workflows(workflow_id) ON DELETE CASCADE;
+
+
+--
+-- Name: subscription_customer_descriptions subscription_customer_descriptions_subscription_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: nwa
+--
+
+ALTER TABLE ONLY public.subscription_customer_descriptions
+    ADD CONSTRAINT subscription_customer_descriptions_subscription_id_fkey FOREIGN KEY (subscription_id) REFERENCES public.subscriptions(subscription_id) ON DELETE CASCADE;
+
+
+--
+-- Name: subscription_instance_relations subscription_instance_relations_depends_on_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: nwa
+--
+
+ALTER TABLE ONLY public.subscription_instance_relations
+    ADD CONSTRAINT subscription_instance_relations_depends_on_id_fkey FOREIGN KEY (depends_on_id) REFERENCES public.subscription_instances(subscription_instance_id) ON DELETE CASCADE;
+
+
+--
+-- Name: subscription_instance_relations subscription_instance_relations_in_use_by_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: nwa
+--
+
+ALTER TABLE ONLY public.subscription_instance_relations
+    ADD CONSTRAINT subscription_instance_relations_in_use_by_id_fkey FOREIGN KEY (in_use_by_id) REFERENCES public.subscription_instances(subscription_instance_id) ON DELETE CASCADE;
+
+
+--
+-- Name: subscription_instance_values subscription_instance_values_resource_type_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: nwa
+--
+
+ALTER TABLE ONLY public.subscription_instance_values
+    ADD CONSTRAINT subscription_instance_values_resource_type_id_fkey FOREIGN KEY (resource_type_id) REFERENCES public.resource_types(resource_type_id);
+
+
+--
+-- Name: subscription_instance_values subscription_instance_values_subscription_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: nwa
+--
+
+ALTER TABLE ONLY public.subscription_instance_values
+    ADD CONSTRAINT subscription_instance_values_subscription_instance_id_fkey FOREIGN KEY (subscription_instance_id) REFERENCES public.subscription_instances(subscription_instance_id) ON DELETE CASCADE;
+
+
+--
+-- Name: subscription_instances subscription_instances_product_block_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: nwa
+--
+
+ALTER TABLE ONLY public.subscription_instances
+    ADD CONSTRAINT subscription_instances_product_block_id_fkey FOREIGN KEY (product_block_id) REFERENCES public.product_blocks(product_block_id);
+
+
+--
+-- Name: subscription_instances subscription_instances_subscription_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: nwa
+--
+
+ALTER TABLE ONLY public.subscription_instances
+    ADD CONSTRAINT subscription_instances_subscription_id_fkey FOREIGN KEY (subscription_id) REFERENCES public.subscriptions(subscription_id) ON DELETE CASCADE;
+
+
+--
+-- Name: subscription_metadata subscription_metadata_subscription_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: nwa
+--
+
+ALTER TABLE ONLY public.subscription_metadata
+    ADD CONSTRAINT subscription_metadata_subscription_id_fkey FOREIGN KEY (subscription_id) REFERENCES public.subscriptions(subscription_id) ON DELETE CASCADE;
+
+
+--
+-- Name: subscriptions subscriptions_product_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: nwa
+--
+
+ALTER TABLE ONLY public.subscriptions
+    ADD CONSTRAINT subscriptions_product_id_fkey FOREIGN KEY (product_id) REFERENCES public.products(product_id);
+
+
+--
+-- Name: subscriptions_search; Type: MATERIALIZED VIEW DATA; Schema: public; Owner: nwa
+--
+
+REFRESH MATERIALIZED VIEW public.subscriptions_search;
+
+
+--
+-- PostgreSQL database dump complete
+--
+
