@@ -33,7 +33,7 @@ def initial_input_form_generator(product_name: str) -> FormGenerator:
         # label_email_settings: Label
         # divider_1: Divider
 
-        user_id: EmailStr
+        user_id: UUIDstr = "4af1f7f5-4781-4607-bf6c-f0388f7f4527"
         # email_address: Optional[str]
         subject: Optional[str]
         # message: Optional[str]
@@ -53,7 +53,7 @@ def create_summary_form(
     user_input: dict,
     product_name: str,
 ) -> Generator:
-    product_summary_fields = [ "email_address", "subject", "message", "first_name", "user_id", "user_email_address", "is_paying_user",]
+    product_summary_fields = [ "user_id", "subject" ]
 
     class ProductSummary(MigrationSummary):
         data = {
@@ -81,7 +81,7 @@ def construct_email_model(
     ) -> State:
     subscription = EmailInactive.from_product_id(
         product_id=product,
-        customer_id=organisation,
+        customer_id="",
         status=SubscriptionLifecycle.INITIAL,
     )
     # subscription.email.email_address = email_address
