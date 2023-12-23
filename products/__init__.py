@@ -13,3 +13,13 @@
 
 from orchestrator.domain import SUBSCRIPTION_MODEL_REGISTRY
 
+from products.product_types.email import Email
+
+SUBSCRIPTION_MODEL_REGISTRY.update(
+    {
+        "Marketing email": Email,
+        "Reminder email": Email,
+        "Reactivation email": Email,
+        "Platform email": Email,
+        }
+)  # fmt:skip

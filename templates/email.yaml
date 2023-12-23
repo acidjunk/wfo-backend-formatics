@@ -29,7 +29,7 @@ fixed_inputs:
     values:
       - "Marketing"
       - "Reminder"
-      - "Re-activation"
+      - "Reactivation"
       - "Platform"
 product_blocks:
   - name: email

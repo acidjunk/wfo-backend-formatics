@@ -13,3 +13,7 @@
 
 
 from orchestrator.workflows import LazyWorkflowInstance
+LazyWorkflowInstance("workflows.email.create_email", "create_email")
+LazyWorkflowInstance("workflows.email.modify_email", "modify_email")
+LazyWorkflowInstance("workflows.email.terminate_email", "terminate_email")
+LazyWorkflowInstance("workflows.email.validate_email", "validate_email")

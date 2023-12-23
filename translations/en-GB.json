@@ -1,6 +1,1 @@
-{
-  "forms": {
-  },
-  "workflow": {
-  }
-}
+{"forms": {}, "workflow": {"create_email": "Create email", "modify_email": "Modify email", "validate_email": "Validate email", "terminate_email": "Terminate email"}}
