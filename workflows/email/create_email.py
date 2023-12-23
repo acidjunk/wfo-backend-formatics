@@ -1,6 +1,7 @@
 from collections.abc import Generator
 from typing import Optional
 
+from orchestrator import app_settings
 from orchestrator.forms import FormPage
 from orchestrator.forms.validators import Divider, Label, OrganisationId, MigrationSummary
 from orchestrator.targets import Target
@@ -15,12 +16,14 @@ from products.product_types.email import EmailInactive, EmailProvisioning
 
 from orchestrator.domain import SubscriptionModel
 
+from services.improviser import get_user_by_id
 
-def subscription_description(subscription: SubscriptionModel) -> str:
+
+def subscription_description(subscription: EmailProvisioning) -> str:
     """The suggested pattern is to implement a subscription service that generates a subscription specific
        description, in case that is not present the description will just be set to the product name.
     """
-    return f"{subscription.product.name} subscription"
+    return f"{subscription.product.name} email {subscription.email.email_address}"
 
 
 def initial_input_form_generator(product_name: str) -> FormGenerator:
@@ -73,7 +76,7 @@ def create_summary_form(
     yield SummaryForm
 
 
-@step("Construct Subscription model")
+@step("Construct Initial Subscription model")
 def construct_email_model(
     product: UUIDstr,
     subject: Optional,
@@ -81,23 +84,39 @@ def construct_email_model(
     ) -> State:
     subscription = EmailInactive.from_product_id(
         product_id=product,
-        customer_id="",
+        customer_id=app_settings.DEFAULT_CUSTOMER_IDENTIFIER,
         status=SubscriptionLifecycle.INITIAL,
     )
-    # subscription.email.email_address = email_address
-    # subscription.email.subject = subject
-    # subscription.email.message = message
-    # subscription.email.improviser.first_name = first_name
     subscription.email.improviser.user_id = user_id
-    subscription.email.improviser.user_email_address = user_email_address
-    subscription.email.improviser.is_paying_user = is_paying_user
-
-    subscription = EmailProvisioning.from_other_lifecycle(subscription, SubscriptionLifecycle.PROVISIONING)
-    subscription.description = subscription_description(subscription)
+    subscription.email.subject = subject
 
     return {
         "subscription": subscription,
         "subscription_id": subscription.subscription_id,  # necessary to be able to use older generic step functions
+    }
+
+
+@step("Enrich worfklow with improviser info")
+def fetch_improviser_info(subscription: EmailInactive) -> State:
+    data = get_user_by_id(subscription.email.improviser.user_id)
+    subscription.email.email_address = data["user_email_address"]
+    subscription.email.improviser.user_email_address = data["user_email_address"]
+    subscription.email.improviser.first_name = data["first_name"]
+    subscription.email.improviser.is_paying_user = data["is_paying_user"]
+    return {
+        "subscription": subscription,
+        "subscription_description": subscription.description,
+    }
+
+@step("Set email to provisioning")
+def set_to_provisioning(subscription: EmailInactive) -> State:
+    subscription = EmailProvisioning.from_other_lifecycle(subscription, SubscriptionLifecycle.PROVISIONING)
+    # Todo: cook up nice mails, for now just hardcoded test
+    subscription.email.message = "Nice cool test text"
+    subscription.description = subscription_description(subscription)
+
+    return {
+        "subscription": subscription,
         "subscription_description": subscription.description,
     }
 
@@ -110,6 +129,8 @@ def create_email() -> StepList:
     return (
         begin
         >> construct_email_model
+        >> fetch_improviser_info
+        >> set_to_provisioning
         >> store_process_subscription(Target.CREATE)
         # TODO add provision step(s)
     )
